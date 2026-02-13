@@ -1,8 +1,17 @@
 @import "tailwindcss";
 
+/* =========================
+   Thème (comme ton fichier d'origine)
+   ========================= */
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  /* petits plus visuels */
+  --page-bg: #fafafa; /* léger "blanc cassé" */
+  --link-underline: rgba(0, 0, 0, 0.20);
+  --link-underline-hover: rgba(0, 0, 0, 0.45);
+  --focus: rgba(0, 0, 0, 0.45);
 }
 
 @theme inline {
@@ -16,11 +25,70 @@
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
+
+    --page-bg: #0a0a0a;
+    --link-underline: rgba(255, 255, 255, 0.25);
+    --link-underline-hover: rgba(255, 255, 255, 0.55);
+    --focus: rgba(255, 255, 255, 0.55);
   }
 }
 
+/* =========================
+   Base globale (plus "pro")
+   ========================= */
+html,
 body {
-  background: var(--background);
+  height: 100%;
+}
+
+body {
+  background: var(--page-bg);
   color: var(--foreground);
+
+  /* typographie simple et lisible */
   font-family: Arial, Helvetica, sans-serif;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Liens sobres */
+a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--link-underline);
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  text-decoration-color: var(--link-underline-hover);
+}
+
+/* Lisibilité globale */
+p,
+ul,
+ol {
+  line-height: 1.65;
+}
+
+/* Sélection de texte */
+::selection {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+/* Focus clavier (accessibilité) */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Impression */
+@media print {
+  body {
+    background: #ffffff !important;
+  }
+  a {
+    text-decoration: none !important;
+  }
 }

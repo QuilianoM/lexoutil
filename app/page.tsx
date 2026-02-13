@@ -1,65 +1,231 @@
-import Image from "next/image";
+import Link from "next/link";
 
-export default function Home() {
+import { Container } from "@/components/ui/container";
+import { Section } from "@/components/ui/section";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+
+export default function HomePage() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <Container size="md" className="py-10">
+      {/* HERO */}
+      <div className="text-center">
+        <h1 className="text-3xl font-semibold tracking-tight text-zinc-900">
+          Lexoutil — assistance juridique simple & documents prêts à copier
+        </h1>
+
+        <p className="mx-auto mt-3 max-w-2xl text-sm text-zinc-600">
+          Expliquez votre situation, suivez les étapes recommandées, puis générez un document clair
+          (mise en demeure, relance, contestation…).{" "}
+          <span className="text-zinc-500">
+            Informations générales uniquement — pas de conseil juridique personnalisé.
+          </span>
+        </p>
+
+        <div className="mt-5 flex flex-col items-center justify-center gap-2 sm:flex-row">
+          <Link href="/documents">
+            <Button>Générer un document</Button>
+          </Link>
+          <Link href="/guides">
+            <Button variant="secondary">Lire les guides</Button>
+          </Link>
+          <Link href="/assistance">
+            <Button variant="secondary">Demander une assistance</Button>
+          </Link>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+          <Badge variant="outline">Simple</Badge>
+          <Badge variant="outline">Rapide</Badge>
+          <Badge variant="outline">Sobre & pro</Badge>
+          <Badge variant="outline">A4 + PDF</Badge>
         </div>
-      </main>
+      </div>
+
+      {/* COMMENT ÇA MARCHE */}
+      <Section className="pt-8">
+        <Card>
+          <CardContent className="p-5">
+            <h2 className="text-sm font-semibold text-zinc-900">Comment ça marche</h2>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+              <Step
+                number="1"
+                title="Décrivez les faits"
+                text="Dates, faits, échanges, preuves disponibles. Restez simple et chronologique."
+              />
+              <Step
+                number="2"
+                title="Générez le document"
+                text="Le générateur structure le texte (objet, paragraphes, demande, délai)."
+              />
+              <Step
+                number="3"
+                title="Copiez / PDF / imprimez"
+                text="Copie robuste, aperçu A4, export PDF et impression propre."
+              />
+            </div>
+
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+              <Link href="/documents">
+                <Button>Ouvrir le générateur</Button>
+              </Link>
+              <Link href="/print">
+                <Button variant="secondary">Voir l’aperçu A4</Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      </Section>
+
+      {/* CE QUE TU OBTIENS */}
+      <Section className="pt-6">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Card>
+            <CardContent className="p-5">
+              <h2 className="text-sm font-semibold text-zinc-900">Ce que vous obtenez</h2>
+              <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-zinc-700">
+                <li>Un texte clair, structuré, et facile à relire</li>
+                <li>Un format “courrier” propre (expéditeur/destinataire/objet)</li>
+                <li>Un aperçu A4 fidèle + export PDF</li>
+                <li>Une base solide pour vos échanges (plateforme, vendeur, organisme…)</li>
+              </ul>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Badge variant="outline">Mise en demeure</Badge>
+                <Badge variant="outline">Relance</Badge>
+                <Badge variant="outline">Contestations</Badge>
+                <Badge variant="outline">Litiges simples</Badge>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-5">
+              <h2 className="text-sm font-semibold text-zinc-900">Important (cadre juridique)</h2>
+              <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-zinc-700">
+                <li>Lexoutil fournit une aide générale (explications & modèles).</li>
+                <li>Ce n’est pas une consultation d’avocat.</li>
+                <li>En cas d’urgence ou de dossier complexe : avocat / professionnel du droit.</li>
+                <li>Ne transmettez pas d’informations sensibles (mots de passe, carte bancaire, etc.).</li>
+              </ul>
+
+              <div className="mt-4">
+                <Link href="/assistance">
+                  <Button variant="secondary">Contacter l’assistance</Button>
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </Section>
+
+      {/* BLOCS “SERVICES” */}
+      <Section className="pt-6">
+        <Card>
+          <CardContent className="p-5">
+            <h2 className="text-sm font-semibold text-zinc-900">Services</h2>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+              <Service
+                title="Guides"
+                text="Comprendre les étapes et éviter les erreurs classiques."
+                ctaLabel="Voir les guides"
+                href="/guides"
+              />
+              <Service
+                title="Documents"
+                text="Générer rapidement un courrier structuré et professionnel."
+                ctaLabel="Générer"
+                href="/documents"
+                primary
+              />
+              <Service
+                title="Assistance"
+                text="Obtenir une orientation simple sur les documents utiles."
+                ctaLabel="Demander"
+                href="/assistance"
+              />
+            </div>
+          </CardContent>
+        </Card>
+      </Section>
+
+      {/* FOOTER NOTE */}
+      <Section className="pt-6">
+        <p className="text-center text-xs text-zinc-500">
+          En utilisant Lexoutil, vous acceptez les pages légales :{" "}
+          <Link className="underline" href="/mentions">
+            Mentions légales
+          </Link>
+          ,{" "}
+          <Link className="underline" href="/confidentialite">
+            Confidentialité
+          </Link>{" "}
+          et{" "}
+          <Link className="underline" href="/cgu">
+            CGU
+          </Link>
+          .
+        </p>
+      </Section>
+    </Container>
+  );
+}
+
+function Step({
+  number,
+  title,
+  text,
+}: {
+  number: string;
+  title: string;
+  text: string;
+}) {
+  return (
+    <div className="rounded-lg border border-zinc-200 p-4">
+      <div className="flex items-center gap-2">
+        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-zinc-900 text-xs font-semibold text-white">
+          {number}
+        </span>
+        <div className="text-sm font-semibold text-zinc-900">{title}</div>
+      </div>
+      <p className="mt-2 text-sm text-zinc-600">{text}</p>
+    </div>
+  );
+}
+
+function Service({
+  title,
+  text,
+  href,
+  ctaLabel,
+  primary,
+}: {
+  title: string;
+  text: string;
+  href: string;
+  ctaLabel: string;
+  primary?: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-zinc-200 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-zinc-900">{title}</div>
+          <p className="mt-1 text-sm text-zinc-600">{text}</p>
+        </div>
+        {primary ? <Badge>Recommandé</Badge> : <Badge variant="outline">Service</Badge>}
+      </div>
+
+      <div className="mt-4">
+        <Link href={href}>
+          <Button size="sm" variant={primary ? "primary" : "secondary"}>
+            {ctaLabel}
+          </Button>
+        </Link>
+      </div>
     </div>
   );
 }
