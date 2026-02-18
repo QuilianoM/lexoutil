@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -9,138 +9,110 @@ import { Section } from "@/components/ui/section";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import LegalDisclaimer from "@/components/legal-disclaimer";
 
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 
-function isValidEmail(email: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
-}
-
-function supabaseErrorToFR(raw?: string) {
-  const m = (raw || "").toLowerCase();
-
-  if (!m) return "Une erreur est survenue. Réessayez.";
-  if (m.includes("invalid login credentials"))
-    return "Email ou mot de passe incorrect.";
-  if (m.includes("email not confirmed") || m.includes("not confirmed"))
-    return "Votre email n’est pas confirmé. Utilisez “Renvoyer l’email de confirmation”.";
-  if (m.includes("too many requests"))
-    return "Trop de tentatives. Attendez un peu puis réessayez.";
-  if (m.includes("user not found"))
-    return "Aucun compte trouvé avec cet email.";
-  if (m.includes("password") && m.includes("invalid"))
-    return "Mot de passe incorrect.";
-  if (m.includes("network") || m.includes("fetch"))
-    return "Problème de connexion internet. Réessayez.";
-
-  return "Connexion impossible. Vérifiez vos informations et réessayez.";
-}
+// ✅ Empêche Next de tenter un pré-render serveur sur Vercel
+export const dynamic = "force-dynamic";
 
 export default function ConnexionPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-
-  const redirect = useMemo(() => {
-    const r = searchParams.get("redirect");
-    return r && r.startsWith("/") ? r : "/compte";
-  }, [searchParams]);
-
-  const resetSuccess = searchParams.get("reset") === "success";
-
-  const supabase = useMemo(() => getSupabaseBrowserClient(), []);
+  const sp = useSearchParams();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   const [loading, setLoading] = useState(false);
-
   const [message, setMessage] = useState<string>("");
 
-  const [emailError, setEmailError] = useState<string | null>(null);
-  const [passwordError, setPasswordError] = useState<string | null>(null);
+  // Si tu utilises un retour vers une page précise : /connexion?next=/documents
+  const nextUrl = (sp?.get("next") || "/compte").trim() || "/compte";
 
   useEffect(() => {
-    if (resetSuccess) {
-      setMessage("✅ Mot de passe modifié, vous pouvez vous connecter.");
-    }
-
+    // Petite sécurité : si déjà connecté, on redirige
     (async () => {
-      const { data } = await supabase.auth.getUser();
-      if (data?.user) router.replace(redirect);
+      try {
+        const supabase = getSupabaseBrowserClient();
+        const { data } = await supabase.auth.getUser();
+        if (data?.user) {
+          router.replace(nextUrl);
+        }
+      } catch {
+        // ignore
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function resetErrors() {
-    setMessage("");
-    setEmailError(null);
-    setPasswordError(null);
-  }
-
-  function validate() {
-    let ok = true;
-    const eMail = email.trim();
-
-    if (!isValidEmail(eMail)) {
-      setEmailError("Email invalide (ex : nom@email.com).");
-      ok = false;
-    }
-
-    if (!password || password.length < 6) {
-      setPasswordError("Mot de passe invalide (minimum 6 caractères).");
-      ok = false;
-    }
-
-    return ok;
-  }
-
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
-    resetErrors();
+    setMessage("");
 
-    if (!validate()) return;
-
-    setLoading(true);
-    try {
-      const eMail = email.trim();
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: eMail,
-        password,
-      });
-
-      if (error || !data?.user) {
-        setMessage(supabaseErrorToFR(error?.message));
-        return;
-      }
-
-      router.replace(redirect);
-    } finally {
-      setLoading(false);
+    const e1 = email.trim();
+    if (!e1) {
+      setMessage("Veuillez saisir votre email.");
+      return;
     }
-  }
-
-  async function resendConfirmationEmail() {
-    resetErrors();
-
-    const eMail = email.trim();
-    if (!isValidEmail(eMail)) {
-      setEmailError("Saisissez votre email pour renvoyer le lien de confirmation.");
+    if (!password) {
+      setMessage("Veuillez saisir votre mot de passe.");
       return;
     }
 
     setLoading(true);
     try {
-      const { error } = await supabase.auth.resend({
-        type: "signup",
-        email: eMail,
+      const supabase = getSupabaseBrowserClient();
+
+      const { error } = await supabase.auth.signInWithPassword({
+        email: e1,
+        password,
       });
 
       if (error) {
-        setMessage(supabaseErrorToFR(error.message));
+        setMessage("Connexion impossible. Vérifiez vos identifiants.");
         return;
       }
 
-      setMessage("Email de confirmation renvoyé. Vérifiez aussi les spams/indésirables.");
+      router.replace(nextUrl);
+    } catch {
+      setMessage("Erreur technique lors de la connexion. Réessayez.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleMagicLink() {
+    setMessage("");
+    const e1 = email.trim();
+    if (!e1) {
+      setMessage("Veuillez saisir votre email.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const supabase = getSupabaseBrowserClient();
+
+      // Optionnel : si tu as NEXT_PUBLIC_SITE_URL en env, c’est parfait.
+      // Sinon, Supabase utilisera la config du projet.
+      const redirectTo =
+        typeof window !== "undefined"
+          ? `${window.location.origin}${nextUrl.startsWith("/") ? nextUrl : `/${nextUrl}`}`
+          : undefined;
+
+      const { error } = await supabase.auth.signInWithOtp({
+        email: e1,
+        options: redirectTo ? { emailRedirectTo: redirectTo } : undefined,
+      });
+
+      if (error) {
+        setMessage("Impossible d’envoyer le lien. Réessayez.");
+        return;
+      }
+
+      setMessage("Lien envoyé. Consultez votre email pour vous connecter.");
+    } catch {
+      setMessage("Erreur technique. Réessayez.");
     } finally {
       setLoading(false);
     }
@@ -149,51 +121,43 @@ export default function ConnexionPage() {
   return (
     <Container>
       <Section>
-        <div className="mx-auto w-full max-w-4xl py-10">
-          <div className="flex justify-center">
-            <Card className="w-full max-w-md">
-              <CardContent className="p-6">
-                <h1 className="text-xl font-semibold text-zinc-900">Connexion</h1>
-                <p className="mt-1 text-sm text-zinc-600">
-                  Connectez-vous pour accéder à votre compte.
-                </p>
+        <div className="mx-auto w-full max-w-lg py-10">
+          <h1 className="text-2xl font-semibold tracking-tight">Connexion</h1>
+          <p className="mt-1 text-sm text-zinc-600">
+            Connectez-vous pour accéder à votre compte et vos documents.
+          </p>
 
-                {message ? (
-                  <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-700">
-                    {message}
-                  </div>
-                ) : null}
+          {message ? (
+            <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-700">
+              {message}
+            </div>
+          ) : null}
 
-                <form onSubmit={handleLogin} className="mt-5 grid gap-4" noValidate>
-                  <div className="grid gap-1">
-                    <label htmlFor="email" className="text-xs font-medium text-zinc-800">
-                      Email
-                    </label>
-                    <Input
-                      id="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="ex : nom@email.com"
-                      autoComplete="email"
-                    />
-                    {emailError && <div className="text-xs text-red-600">{emailError}</div>}
-                  </div>
+          <Card className="mt-6">
+            <CardContent className="p-6">
+              <form onSubmit={handleLogin} className="grid gap-4">
+                <div className="grid gap-1">
+                  <label className="text-xs font-medium text-zinc-800">Email</label>
+                  <Input
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="ex: nom@email.com"
+                    autoComplete="email"
+                  />
+                </div>
 
-                  <div className="grid gap-1">
-                    <label htmlFor="password" className="text-xs font-medium text-zinc-800">
-                      Mot de passe
-                    </label>
-                    <Input
-                      id="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      type="password"
-                      autoComplete="current-password"
-                    />
-                    {passwordError && <div className="text-xs text-red-600">{passwordError}</div>}
-                  </div>
+                <div className="grid gap-1">
+                  <label className="text-xs font-medium text-zinc-800">Mot de passe</label>
+                  <Input
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Votre mot de passe"
+                    type="password"
+                    autoComplete="current-password"
+                  />
+                </div>
 
+                <div className="flex flex-wrap gap-2">
                   <Button type="submit" disabled={loading}>
                     {loading ? "Connexion…" : "Se connecter"}
                   </Button>
@@ -201,24 +165,25 @@ export default function ConnexionPage() {
                   <Button
                     type="button"
                     variant="secondary"
-                    onClick={resendConfirmationEmail}
+                    onClick={() => void handleMagicLink()}
                     disabled={loading}
                   >
-                    Renvoyer l’email de confirmation
+                    {loading ? "Envoi…" : "Envoyer un lien"}
                   </Button>
+                </div>
 
-                  <Button type="button" variant="ghost" asChild>
-                    <Link href={`/inscription?redirect=${encodeURIComponent(redirect)}`}>
-                      Créer un compte
-                    </Link>
-                  </Button>
-                </form>
+                <div className="text-xs text-zinc-600">
+                  Pas de compte ?{" "}
+                  <Link className="underline" href="/inscription">
+                    Créer un compte
+                  </Link>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
 
-                <p className="mt-6 text-xs text-zinc-500">
-                  ⚠️ LEXOUTIL propose des modèles et une assistance générale. Aucun conseil juridique personnalisé.
-                </p>
-              </CardContent>
-            </Card>
+          <div className="mt-4">
+            <LegalDisclaimer />
           </div>
         </div>
       </Section>
