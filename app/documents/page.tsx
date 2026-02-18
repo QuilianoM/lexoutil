@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
@@ -247,9 +248,9 @@ function validateTemplateValues(template: any, values: Record<string, string>) {
   return errors;
 }
 
-/* ---------------------- Page ---------------------- */
+/* ---------------------- Page (inner) ---------------------- */
 
-export default function DocumentsPage() {
+function DocumentsPageInner() {
   const uid = useId();
   const searchParams = useSearchParams();
 
@@ -692,8 +693,8 @@ export default function DocumentsPage() {
             <div>
               <h1 className="text-2xl font-semibold tracking-tight">Documents</h1>
               <p className="mt-1 text-sm text-zinc-600">
-                Générateur de documents. Remplissez le formulaire, vérifiez l’aperçu,
-                puis copiez ou exportez en PDF.
+                Générateur de documents. Remplissez le formulaire, vérifiez l’aperçu, puis
+                copiez ou exportez en PDF.
               </p>
             </div>
 
@@ -800,7 +801,9 @@ export default function DocumentsPage() {
                             <Input {...commonProps} placeholder={field.placeholder} />
                           )}
 
-                          {field.hint ? <FieldHint id={`${id}-hint`}>{field.hint}</FieldHint> : null}
+                          {field.hint ? (
+                            <FieldHint id={`${id}-hint`}>{field.hint}</FieldHint>
+                          ) : null}
                           {err ? <FieldError id={`${id}-err`}>{err}</FieldError> : null}
                         </div>
                       );
@@ -822,9 +825,7 @@ export default function DocumentsPage() {
 
                     <Button
                       variant="secondary"
-                      onClick={() =>
-                        setPreviewMode((m) => (m === "layout" ? "text" : "layout"))
-                      }
+                      onClick={() => setPreviewMode((m) => (m === "layout" ? "text" : "layout"))}
                     >
                       {previewMode === "layout" ? "Aperçu texte" : "Aperçu mise en page"}
                     </Button>
@@ -911,7 +912,9 @@ export default function DocumentsPage() {
 
                     <div className="mt-4 grid gap-3">
                       {history.length === 0 ? (
-                        <div className="text-sm text-zinc-600">Aucun document dans l’historique.</div>
+                        <div className="text-sm text-zinc-600">
+                          Aucun document dans l’historique.
+                        </div>
                       ) : (
                         history.map((item) => (
                           <Card key={item.id}>
@@ -955,5 +958,27 @@ export default function DocumentsPage() {
         </div>
       </Section>
     </Container>
+  );
+}
+
+/* ---------------------- Page (export) ---------------------- */
+
+export default function DocumentsPage() {
+  return (
+    <Suspense
+      fallback={
+        <Container>
+          <Section>
+            <div className="mx-auto w-full max-w-6xl py-10">
+              <div className="rounded-lg border border-zinc-200 bg-white p-4 text-sm text-zinc-700">
+                Chargement…
+              </div>
+            </div>
+          </Section>
+        </Container>
+      }
+    >
+      <DocumentsPageInner />
+    </Suspense>
   );
 }
