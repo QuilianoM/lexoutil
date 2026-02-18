@@ -1,15 +1,15 @@
+import { Suspense } from "react";
 import dynamic from "next/dynamic";
 
-/*
-  On charge la page connexion uniquement côté client
-  → évite tous les bugs de prerender / useSearchParams / auth
-*/
-
 const ConnexionClient = dynamic(
-  () => import("./ConnexionClient"),
+  () => import("./ConnexionClient.tsx"),
   { ssr: false }
 );
 
 export default function ConnexionPage() {
-  return <ConnexionClient />;
+  return (
+    <Suspense fallback={<div className="p-10 text-center">Chargement...</div>}>
+      <ConnexionClient />
+    </Suspense>
+  );
 }
