@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import dynamic from "next/dynamic";
 
 const ConnexionClient = dynamic(
-  () => import("./ConnexionClient.tsx"),
+  () => import("./ConnexionClient"),
   { ssr: false }
 );
 
