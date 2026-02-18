@@ -1,15 +1,7 @@
-import { Suspense } from "react";
-import dynamic from "next/dynamic";
+"use client";
 
-const ConnexionClient = dynamic(
-  () => import("./ConnexionClient"),
-  { ssr: false }
-);
+import ConnexionClient from "./ConnexionClient";
 
 export default function ConnexionPage() {
-  return (
-    <Suspense fallback={<div className="p-10 text-center">Chargement...</div>}>
-      <ConnexionClient />
-    </Suspense>
-  );
+  return <ConnexionClient />;
 }
