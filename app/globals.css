@@ -8,87 +8,118 @@
   --foreground: #171717;
 
   /* petits plus visuels */
-  --page-bg: #fafafa; /* léger "blanc cassé" */
-  --link-underline: rgba(0, 0, 0, 0.20);
-  --link-underline-hover: rgba(0, 0, 0, 0.45);
-  --focus: rgba(0, 0, 0, 0.45);
+  --card: #ffffff;
+  --card-border: #e4e4e7;
+
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+
+  --radius: 14px;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-
-    --page-bg: #0a0a0a;
-    --link-underline: rgba(255, 255, 255, 0.25);
-    --link-underline-hover: rgba(255, 255, 255, 0.55);
-    --focus: rgba(255, 255, 255, 0.55);
-  }
-}
-
-/* =========================
-   Base globale (plus "pro")
-   ========================= */
 html,
 body {
   height: 100%;
 }
 
 body {
-  background: var(--page-bg);
+  background: var(--background);
   color: var(--foreground);
-
-  /* typographie simple et lisible */
-  font-family: Arial, Helvetica, sans-serif;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Liens sobres */
+/* Améliore la lisibilité et évite des débordements chelous */
+* {
+  min-width: 0;
+}
+
+::selection {
+  background: #18181b;
+  color: white;
+}
+
 a {
-  color: inherit;
-  text-decoration: underline;
-  text-decoration-color: var(--link-underline);
-  text-underline-offset: 2px;
+  text-decoration: none;
 }
 
 a:hover {
-  text-decoration-color: var(--link-underline-hover);
+  text-decoration: underline;
 }
 
-/* Lisibilité globale */
-p,
-ul,
-ol {
-  line-height: 1.65;
-}
-
-/* Sélection de texte */
-::selection {
-  background: rgba(0, 0, 0, 0.12);
-}
-
-/* Focus clavier (accessibilité) */
-:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-  border-radius: 6px;
-}
-
-/* Impression */
+/* =========================
+   Impression / PDF (PRINT)
+   Objectif : imprimer uniquement l’aperçu (#lexoutil-print)
+   ========================= */
 @media print {
-  body {
-    background: #ffffff !important;
+  /* Pas de marges navigateur absurdes */
+  @page {
+    size: A4;
+    margin: 12mm;
   }
-  a {
-    text-decoration: none !important;
+
+  html,
+  body {
+    background: white !important;
+  }
+
+  /* On cache tout par défaut… */
+  body * {
+    visibility: hidden !important;
+  }
+
+  /* …et on n’affiche QUE la zone de rendu */
+  #lexoutil-print,
+  #lexoutil-print * {
+    visibility: visible !important;
+  }
+
+  /* On force la zone imprimable à se placer en haut à gauche */
+  #lexoutil-print {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+  }
+
+  /* On évite les coupures moches */
+  #lexoutil-print {
+    break-inside: avoid;
+  }
+
+  pre,
+  blockquote,
+  table,
+  img {
+    break-inside: avoid;
+  }
+
+  /* La barre Next.js, boutons, etc. ne doivent jamais apparaître */
+  button,
+  a,
+  nav,
+  header,
+  footer {
+    display: none !important;
+  }
+}
+/* Impression (PDF) */
+@media print {
+  header,
+  footer,
+  nav {
+    display: none !important;
+  }
+
+  .print-hide {
+    display: none !important;
+  }
+
+  body {
+    background: white !important;
+  }
+
+  /* évite les sauts moches dans les cartes */
+  .avoid-print-break {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 }

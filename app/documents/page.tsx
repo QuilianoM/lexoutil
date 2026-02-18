@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
-import { documentTemplates } from "@/lib/document-templates";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import {
+  documentTemplates,
+  type DocumentField,
+  type DocumentTemplate,
+} from "@/lib/document-templates";
 
 import { Container } from "@/components/ui/container";
 import { Section } from "@/components/ui/section";
@@ -12,6 +16,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+
+import LegalDisclaimer from "@/components/legal-disclaimer";
 
 import {
   addToHistory,
@@ -26,36 +32,73 @@ import {
 } from "@/lib/user-data";
 
 import { sanitizeText } from "@/lib/sanitize";
+import { createDocument } from "@/lib/supabase-documents";
+import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
+
+// ✅ Pro/Free + erreurs FR
+import { isPro } from "@/lib/subscription";
+import { erreurFR } from "@/lib/errors-fr";
+
+type PreviewMode = "layout" | "text";
 
 type FormState = {
   templateId: string;
-  nom: string;
-  adresse: string;
-  ville: string;
-  date: string; // jj/mm/aaaa
-  destinataire: string;
-  adresseDestinataire: string;
-  objet: string;
-  faits: string;
-  demande: string;
-  delai: string; // jours
+  values: Record<string, string>;
 };
 
-const defaultState: FormState = {
-  templateId: "mise-en-demeure",
-  nom: "",
-  adresse: "",
-  ville: "",
-  date: "",
-  destinataire: "",
-  adresseDestinataire: "",
-  objet: "",
-  faits: "",
-  demande: "",
-  delai: "",
-};
-
+const defaultTemplateId = "mise-en-demeure";
 const HISTORY_MAX_ITEMS = 30;
+
+/* ---------------------- Helpers safe (templates) ---------------------- */
+
+function getFieldsSafe(template: any): DocumentField[] {
+  const fields = template?.fields;
+  return Array.isArray(fields) ? fields : [];
+}
+
+function getFirstValidTemplate(list: any[]): any | null {
+  if (!Array.isArray(list) || list.length === 0) return null;
+  const valid = list.find((t) => Array.isArray(t?.fields));
+  return valid || list[0] || null;
+}
+
+function getTemplateSafe(list: any[], templateId: string): any | null {
+  const found = Array.isArray(list) ? list.find((t) => t?.id === templateId) : null;
+  if (found && Array.isArray(found?.fields)) return found;
+  return getFirstValidTemplate(list);
+}
+
+function isTemplateIdValid(list: any[], templateId: string) {
+  if (!templateId) return false;
+  return Array.isArray(list) && list.some((t) => t?.id === templateId);
+}
+
+function buildInitialValues(template: any): Record<string, string> {
+  const obj: Record<string, string> = {};
+  for (const f of getFieldsSafe(template)) obj[f.id] = "";
+  return obj;
+}
+
+function applyPrefillIfEmpty(
+  template: any,
+  currentValues: Record<string, string>,
+  prefill: Record<string, string>
+) {
+  // n’applique que si le champ existe dans le template
+  const allowed = new Set(getFieldsSafe(template).map((f) => f.id));
+  const next = { ...currentValues };
+
+  for (const [k, v] of Object.entries(prefill)) {
+    if (!allowed.has(k)) continue;
+    const current = (next[k] || "").trim();
+    if (current) continue; // ne remplace pas si déjà rempli
+    next[k] = String(v || "");
+  }
+
+  return next;
+}
+
+/* ---------------------- Helpers texte ---------------------- */
 
 function normalizeLines(v: string) {
   return (v || "")
@@ -70,6 +113,37 @@ function snippetFromText(text: string, max = 180) {
   if (!t) return "";
   return t.length > max ? t.slice(0, max).trim() + "…" : t;
 }
+
+function slugifyFilename(input: string) {
+  return (input || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 120);
+}
+
+function formatDateForFilename(d: string) {
+  const m = (d || "").trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return "";
+  const [, dd, mm, yyyy] = m;
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function formatFR(ts?: number) {
+  if (!ts) return "";
+  try {
+    return new Intl.DateTimeFormat("fr-FR", {
+      dateStyle: "short",
+      timeStyle: "short",
+    }).format(new Date(ts));
+  } catch {
+    return new Date(ts).toLocaleString();
+  }
+}
+
+/* ---------------------- Validation FR simple ---------------------- */
 
 function isLeapYear(y: number) {
   return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
@@ -108,235 +182,181 @@ function validateDateFR(value: string): string | null {
   return null;
 }
 
-function validateDelai(value: string): string | null {
-  const v = value.trim();
-  if (!v) return null;
-  if (!/^\d+$/.test(v)) return "Le délai doit être un nombre (ex : 8)";
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "Valeur invalide";
-  if (n <= 0) return "Le délai doit être supérieur à 0";
-  if (n > 365) return "Le délai semble trop élevé (max 365)";
+/* ---------------------- UI helpers ---------------------- */
+
+function FieldLabel({
+  htmlFor,
+  children,
+}: {
+  htmlFor: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label htmlFor={htmlFor} className="text-xs font-medium text-zinc-800">
+      {children}
+    </label>
+  );
+}
+
+function FieldHint({ id, children }: { id: string; children?: React.ReactNode }) {
+  if (!children) return null;
+  return (
+    <div id={id} className="text-xs text-zinc-500">
+      {children}
+    </div>
+  );
+}
+
+function FieldError({ id, children }: { id: string; children?: React.ReactNode }) {
+  if (!children) return null;
+  return (
+    <div id={id} className="text-xs text-red-600" role="alert" aria-live="polite">
+      {children}
+    </div>
+  );
+}
+
+/* ---------------------- Sanitize + validate ---------------------- */
+
+function sanitizeFieldValue(field: DocumentField, raw: string) {
+  const maxLen = typeof field.maxLen === "number" ? field.maxLen : 2000;
+  const multiline = field.type === "textarea";
+  return sanitizeText(raw || "", { maxLen, multiline });
+}
+
+function validateFieldValue(field: DocumentField, value: string): string | null {
+  const v = (value || "").trim();
+  if (field.required && !v) return "Champ obligatoire";
+
+  if (field.type === "date_fr") return validateDateFR(v);
+
+  if (field.type === "number") {
+    if (!v) return null;
+    if (!/^\d+$/.test(v)) return "Ce champ doit être un nombre (ex : 8)";
+  }
+
   return null;
 }
 
-function formatPlaceDate(ville: string, date: string) {
-  const v = ville.trim();
-  const d = date.trim();
-  if (!v && !d) return "";
-  if (v && d) return `${v}, le ${d}`;
-  if (v && !d) return v;
-  return `Le ${d}`;
-}
-
-function makePlainText(form: FormState, body: string) {
-  const sender = [form.nom, form.adresse]
-    .map((x) => x.trim())
-    .filter(Boolean)
-    .join("\n");
-
-  const recipient = [form.destinataire, form.adresseDestinataire]
-    .map((x) => x.trim())
-    .filter(Boolean)
-    .join("\n");
-
-  const placeDate = formatPlaceDate(form.ville, form.date);
-
-  const parts: string[] = [];
-  if (sender) parts.push(sender);
-  parts.push("");
-
-  if (recipient) parts.push(`Destinataire\n${recipient}`);
-  parts.push("");
-
-  if (placeDate) parts.push(placeDate);
-  parts.push("");
-
-  if (form.objet.trim()) parts.push(`Objet : ${form.objet.trim()}`);
-  parts.push("");
-
-  parts.push(normalizeLines(body));
-
-  return parts.join("\n").replace(/\n{3,}/g, "\n\n").trim();
-}
-
-function slugifyFilename(input: string) {
-  return (input || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 120);
-}
-
-function formatDateForFilename(d: string) {
-  const m = d.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (!m) return "";
-  const [, dd, mm, yyyy] = m;
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function formatFR(ts?: number) {
-  if (!ts) return "";
-  try {
-    return new Intl.DateTimeFormat("fr-FR", {
-      dateStyle: "short",
-      timeStyle: "short",
-    }).format(new Date(ts));
-  } catch {
-    return new Date(ts).toLocaleString();
+function validateTemplateValues(template: any, values: Record<string, string>) {
+  const errors: Record<string, string> = {};
+  for (const f of getFieldsSafe(template)) {
+    const err = validateFieldValue(f, values[f.id] ?? "");
+    if (err) errors[f.id] = err;
   }
+  return errors;
 }
 
-/**
- * ✅ Étape 8.3 : sanitation centralisée
- * On garde l'état "form" tel que l'utilisateur tape,
- * mais on utilise "cleanForm" pour:
- * - generate
- * - saveDraft
- * - history
- * - copy
- * - pdf
- */
-function sanitizeForm(input: FormState): FormState {
-  return {
-    templateId: input.templateId, // pas de sanitation sur l'id
-    nom: sanitizeText(input.nom, { maxLen: 80 }),
-    adresse: sanitizeText(input.adresse, { maxLen: 180, multiline: true }),
-    ville: sanitizeText(input.ville, { maxLen: 80 }),
-    date: sanitizeText(input.date, { maxLen: 10 }),
-    destinataire: sanitizeText(input.destinataire, { maxLen: 120 }),
-    adresseDestinataire: sanitizeText(input.adresseDestinataire, { maxLen: 220, multiline: true }),
-    objet: sanitizeText(input.objet, { maxLen: 160 }),
-    faits: sanitizeText(input.faits, { maxLen: 2000, multiline: true }),
-    demande: sanitizeText(input.demande, { maxLen: 2000, multiline: true }),
-    delai: sanitizeText(input.delai, { maxLen: 4 }),
-  };
-}
-
-// Champs UI (simple)
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <div className="text-xs font-medium text-zinc-800">{children}</div>;
-}
-
-function FieldHint({ children }: { children?: React.ReactNode }) {
-  if (!children) return null;
-  return <div className="text-xs text-zinc-500">{children}</div>;
-}
-
-function FieldError({ children }: { children?: React.ReactNode }) {
-  if (!children) return null;
-  return <div className="text-xs text-red-600">{children}</div>;
-}
-
-function TextField(props: {
-  label: string;
-  value: string;
-  placeholder?: string;
-  hint?: string;
-  error?: string | null;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <div className="grid gap-1">
-      <FieldLabel>{props.label}</FieldLabel>
-      <Input value={props.value} placeholder={props.placeholder} onChange={(e) => props.onChange(e.target.value)} />
-      <FieldHint>{props.hint}</FieldHint>
-      <FieldError>{props.error || undefined}</FieldError>
-    </div>
-  );
-}
-
-function TextAreaField(props: {
-  label: string;
-  value: string;
-  placeholder?: string;
-  hint?: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <div className="grid gap-1">
-      <FieldLabel>{props.label}</FieldLabel>
-      <Textarea value={props.value} placeholder={props.placeholder} onChange={(e) => props.onChange(e.target.value)} />
-      <FieldHint>{props.hint}</FieldHint>
-    </div>
-  );
-}
+/* ---------------------- Page ---------------------- */
 
 export default function DocumentsPage() {
-  const [form, setForm] = useState<FormState>(defaultState);
+  const uid = useId();
+  const searchParams = useSearchParams();
 
-  const [previewMode, setPreviewMode] = useState<"layout" | "text">("layout");
-  const [isCopying, setIsCopying] = useState(false);
-  const [isPdfLoading, setIsPdfLoading] = useState(false);
-  const [copied, setCopied] = useState<null | "ok" | "err">(null);
+  const templates = documentTemplates as unknown as DocumentTemplate[];
 
-  const [message, setMessage] = useState<string>("");
+  const [form, setForm] = useState<FormState>(() => {
+    const t = getTemplateSafe(templates as any[], defaultTemplateId);
+    return { templateId: t?.id || defaultTemplateId, values: buildInitialValues(t) };
+  });
 
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("layout");
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
 
-  const [lastSavedAt, setLastSavedAt] = useState<number | undefined>(undefined);
+  const [message, setMessage] = useState<string>("");
+  const [copied, setCopied] = useState<"ok" | "err" | null>(null);
+  const [isCopying, setIsCopying] = useState(false);
+  const [isPdfLoading, setIsPdfLoading] = useState(false);
 
+  const [lastSavedAt, setLastSavedAt] = useState<number | undefined>(undefined);
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
-  // ✅ cleanForm utilisé partout où on stocke / génère / exporte
-  const cleanForm = useMemo(() => sanitizeForm(form), [form]);
+  // ✅ URL params (conversion)
+  const templateParam = (searchParams?.get("template") || "").trim();
 
-  // Chargement : brouillon + historique (source unique : lib/user-data.ts)
-  useEffect(() => {
-    const d = loadDraft();
-    if (d) {
-      setForm(d.form as unknown as FormState);
-      setPreviewMode(d.previewMode);
-      setLastSavedAt(d.savedAt);
+  // ✅ URL params (prefill)
+  const prefillParam = useMemo(() => {
+    const objet = (searchParams?.get("prefill_objet") || "").trim();
+    const faits = (searchParams?.get("prefill_faits") || "").trim();
+    const demande = (searchParams?.get("prefill_demande") || "").trim();
+    const delai = (searchParams?.get("prefill_delai") || "").trim();
+
+    const out: Record<string, string> = {};
+    if (objet) out.objet = objet;
+    if (faits) out.faits = faits;
+    if (demande) out.demande = demande;
+    if (delai) out.delai = delai;
+    return out;
+  }, [searchParams]);
+
+  const currentTemplate = useMemo(
+    () => getTemplateSafe(templates as any[], form.templateId),
+    [templates, form.templateId]
+  );
+
+  const fields = useMemo(() => getFieldsSafe(currentTemplate), [currentTemplate]);
+
+  const cleanValues = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const f of fields) {
+      out[f.id] = sanitizeFieldValue(f, form.values[f.id] ?? "");
     }
-    setHistory(loadHistory());
-  }, []);
+    return out;
+  }, [fields, form.values]);
 
-  // Auto-save brouillon (debounce léger) via lib/user-data.ts
-  useEffect(() => {
-    const id = window.setTimeout(() => {
-      const now = Date.now();
-      saveDraft({
-        form: cleanForm as unknown as Record<string, unknown>,
-        previewMode,
-        savedAt: now,
-      });
-      setLastSavedAt(now);
-    }, 450);
-    return () => window.clearTimeout(id);
-  }, [cleanForm, previewMode]);
+  const errors = useMemo(
+    () => validateTemplateValues(currentTemplate, cleanValues),
+    [currentTemplate, cleanValues]
+  );
+  const hasBlockingError = useMemo(() => Object.keys(errors).length > 0, [errors]);
 
-  const currentTemplate = useMemo(() => {
-    return documentTemplates.find((t) => t.id === form.templateId) || documentTemplates[0];
-  }, [form.templateId]);
+  const firstErrorId = useMemo(() => {
+    const keys = Object.keys(errors);
+    return keys.length ? keys[0] : null;
+  }, [errors]);
 
-  const dateError = useMemo(() => validateDateFR(cleanForm.date), [cleanForm.date]);
-  const delaiError = useMemo(() => validateDelai(cleanForm.delai), [cleanForm.delai]);
-  const hasBlockingError = Boolean(dateError || delaiError);
-
-  const generated = useMemo(() => {
-    const body = currentTemplate.generate(cleanForm as any);
-    const plain = makePlainText(cleanForm, body);
-    return { body, plain };
-  }, [currentTemplate, cleanForm]);
-
-  const previewText = generated.plain;
+  const previewText = useMemo(() => {
+    try {
+      const tpl = currentTemplate as any;
+      if (tpl?.generate && typeof tpl.generate === "function") {
+        return String(
+          tpl.generate({
+            templateId: form.templateId,
+            ...cleanValues,
+          }) || ""
+        );
+      }
+    } catch {
+      // ignore
+    }
+    return "";
+  }, [currentTemplate, form.templateId, cleanValues]);
 
   const filenameBase = useMemo(() => {
-    const template = currentTemplate?.label || "document";
-    const date = formatDateForFilename(cleanForm.date);
-    const obj = slugifyFilename(cleanForm.objet);
-    const parts = [template, obj, date].filter(Boolean).join("_");
-    return slugifyFilename(parts || "document");
-  }, [currentTemplate?.label, cleanForm.date, cleanForm.objet]);
+    const base = cleanValues.objet || (currentTemplate as any)?.label || "document";
+    const date = formatDateForFilename(cleanValues.date || "");
+    const parts = [slugifyFilename(base), date].filter(Boolean);
+    return parts.join("_") || "document";
+  }, [cleanValues.objet, cleanValues.date, currentTemplate]);
 
-  const disableActions = isCopying || isPdfLoading || hasBlockingError;
+  function focusFirstError() {
+    if (!firstErrorId) return;
+    const el = document.getElementById(`${uid}-${firstErrorId}`);
+    if (el && "focus" in el) (el as any).focus();
+  }
+
+  function guardBlockingErrors(actionLabel: string): boolean {
+    if (!hasBlockingError) return true;
+    setMessage(`Action impossible : corrigez les erreurs du formulaire avant de ${actionLabel}.`);
+    focusFirstError();
+    return false;
+  }
 
   function doClearDraft() {
     clearDraft();
-    setForm(defaultState);
+    const t = getTemplateSafe(documentTemplates as any[], defaultTemplateId);
+    if (t) setForm({ templateId: t.id, values: buildInitialValues(t) });
     setPreviewMode("layout");
     setLastSavedAt(undefined);
     setMessage("Brouillon effacé.");
@@ -346,43 +366,132 @@ export default function DocumentsPage() {
     setHistory(loadHistory());
   }
 
-  function pushHistorySnapshot() {
-    addToHistory(
-      {
-        id: crypto.randomUUID(),
-        createdAt: Date.now(),
-        templateId: cleanForm.templateId,
-        templateLabel: currentTemplate.label,
-        objet: cleanForm.objet.trim(),
-        destinataire: cleanForm.destinataire.trim(),
-        snippet: snippetFromText(previewText),
-        form: cleanForm as unknown as Record<string, unknown>,
-      },
-      HISTORY_MAX_ITEMS
-    );
+  async function pushHistorySnapshot() {
+    const localId = crypto.randomUUID();
+
+    const item: HistoryItem = {
+      id: localId,
+      createdAt: Date.now(),
+      templateId: form.templateId,
+      templateLabel: (currentTemplate as any)?.label || "Document",
+      objet: (cleanValues.objet || "").trim(),
+      destinataire: (cleanValues.destinataire || "").trim(),
+      snippet: snippetFromText(previewText),
+      form: { templateId: form.templateId, ...cleanValues, _localId: localId },
+    };
+
+    // ✅ Cloud = Pro uniquement
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const { data } = await supabase.auth.getUser();
+
+      if (data?.user && isPro()) {
+        await createDocument({
+          template_id: item.templateId,
+          template_label: item.templateLabel,
+          objet: item.objet,
+          destinataire: item.destinataire,
+          snippet: item.snippet,
+          content: previewText,
+          form: item.form,
+        });
+        return;
+      }
+
+      // connecté mais Free => on informe, puis on continue en local
+      if (data?.user && !isPro()) {
+        setMessage(
+          "Sauvegarde en ligne (cloud) réservée aux comptes Pro. En gratuit, le document est enregistré en local."
+        );
+        window.setTimeout(() => setMessage(""), 4000);
+      }
+    } catch (e: any) {
+      // Erreur cloud => on continue en local
+      setMessage(erreurFR(e, "Sauvegarde en ligne impossible. Enregistrement en local."));
+      window.setTimeout(() => setMessage(""), 4000);
+    }
+
+    const added = addToHistory(item, HISTORY_MAX_ITEMS);
+
+    if (!added) {
+      setMessage("Limite gratuite atteinte : passez en Pro pour enregistrer plus de documents.");
+      return;
+    }
+
     refreshHistoryUI();
   }
 
   async function handleCopy() {
+    if (!guardBlockingErrors("copier")) return;
+
+    const text = (previewText || "").trim();
+    if (!text) {
+      setMessage("Aucun texte à copier (le document est vide).");
+      window.setTimeout(() => setMessage(""), 3000);
+      return;
+    }
+
     setIsCopying(true);
     setCopied(null);
+
+    // Fonction fallback ultra compatible (même si Clipboard API est bloquée)
+    const fallbackCopy = (value: string) => {
+      const ta = document.createElement("textarea");
+      ta.value = value;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.top = "0";
+      ta.style.left = "0";
+      ta.style.opacity = "0";
+      ta.style.pointerEvents = "none";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+
+      let ok = false;
+      try {
+        ok = document.execCommand("copy");
+      } catch {
+        ok = false;
+      }
+      document.body.removeChild(ta);
+      return ok;
+    };
+
     try {
-      await navigator.clipboard.writeText(previewText);
-      setCopied("ok");
-      pushHistorySnapshot();
-    } catch {
-      setCopied("err");
+      // 1) Clipboard API (meilleur cas)
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        setCopied("ok");
+        void pushHistorySnapshot();
+      } else {
+        // 2) Fallback si API indisponible
+        const ok = fallbackCopy(text);
+        if (!ok) throw new Error("Fallback copy failed");
+        setCopied("ok");
+        void pushHistorySnapshot();
+      }
+    } catch (e) {
+      // 3) Dernière chance : fallback même si Clipboard API existe mais échoue
+      const ok = fallbackCopy(text);
+      if (ok) {
+        setCopied("ok");
+        void pushHistorySnapshot();
+      } else {
+        setCopied("err");
+        setMessage("Copie impossible. Astuce : cliquez dans l’aperçu, faites Ctrl+C.");
+        window.setTimeout(() => setMessage(""), 5000);
+      }
     } finally {
       setIsCopying(false);
       window.setTimeout(() => setCopied(null), 2500);
     }
   }
 
-  function handlePrint() {
-    window.print();
-  }
-
   async function handleDownloadPdf() {
+    if (!guardBlockingErrors("exporter en PDF")) return;
+
     setIsPdfLoading(true);
     setMessage("");
 
@@ -391,8 +500,8 @@ export default function DocumentsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          templateId: cleanForm.templateId,
-          data: cleanForm,
+          templateId: form.templateId,
+          data: cleanValues,
           previewMode,
         }),
       });
@@ -410,7 +519,7 @@ export default function DocumentsPage() {
       a.remove();
       URL.revokeObjectURL(url);
 
-      pushHistorySnapshot();
+      void pushHistorySnapshot();
     } catch {
       setMessage("Impossible de générer le PDF. Réessayez.");
     } finally {
@@ -418,21 +527,31 @@ export default function DocumentsPage() {
     }
   }
 
-  function downloadTextFile(filename: string, text: string) {
-    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }
+  // ✅ Impression PRO : ouvre /print avec le texte du document
+  function handleOpenPrintPro() {
+    if (!guardBlockingErrors("imprimer")) return;
 
-  function handleDownloadTxt() {
-    downloadTextFile(`${filenameBase || "document"}.txt`, previewText);
-    pushHistorySnapshot();
+    const text = (previewText || "").trim();
+    if (!text) {
+      setMessage("Aucun texte à imprimer (le document est vide).");
+      window.setTimeout(() => setMessage(""), 3000);
+      return;
+    }
+
+    try {
+      sessionStorage.setItem(
+        "print_payload",
+        JSON.stringify({
+          text,
+          title: `${(currentTemplate as any)?.label || "Document"} — Lexoutil`,
+        })
+      );
+
+      window.open("/print", "_blank", "noopener,noreferrer");
+    } catch {
+      setMessage("Impossible d’ouvrir la vue impression. Réessayez.");
+      window.setTimeout(() => setMessage(""), 3000);
+    }
   }
 
   function openImportDialog() {
@@ -449,7 +568,20 @@ export default function DocumentsPage() {
       setHistory(loadHistory());
       const d = loadDraft();
       if (d) {
-        setForm(d.form as unknown as FormState);
+        const raw = (d.form || {}) as any;
+        const templateId =
+          typeof raw.templateId === "string" ? raw.templateId : defaultTemplateId;
+        const t = getTemplateSafe(documentTemplates as any[], templateId);
+
+        if (t) {
+          const initial = buildInitialValues(t);
+          for (const f of getFieldsSafe(t)) {
+            const v = raw[f.id];
+            if (typeof v === "string") initial[f.id] = v;
+          }
+          setForm({ templateId: t.id, values: initial });
+        }
+
         setPreviewMode(d.previewMode);
         setLastSavedAt(d.savedAt);
       }
@@ -464,7 +596,20 @@ export default function DocumentsPage() {
   }
 
   function handleLoadHistoryItem(item: HistoryItem) {
-    setForm(item.form as unknown as FormState);
+    const raw = (item.form || {}) as any;
+    const templateId =
+      typeof raw.templateId === "string" ? raw.templateId : item.templateId;
+    const t = getTemplateSafe(documentTemplates as any[], templateId);
+
+    if (t) {
+      const initial = buildInitialValues(t);
+      for (const f of getFieldsSafe(t)) {
+        const v = raw[f.id];
+        if (typeof v === "string") initial[f.id] = v;
+      }
+      setForm({ templateId: t.id, values: initial });
+    }
+
     setPreviewMode("layout");
     setMessage("Document chargé depuis l'historique.");
     setShowHistory(false);
@@ -476,308 +621,337 @@ export default function DocumentsPage() {
     setMessage("Historique supprimé.");
   }
 
+  function handleDownloadBackup() {
+    downloadBackupFile();
+    setMessage("Sauvegarde téléchargée.");
+  }
+
+  // ✅ CHARGEMENT INITIAL : si template URL valide -> charge template + applique prefill (sans écraser si déjà rempli)
+  useEffect(() => {
+    setHistory(loadHistory());
+
+    if (templateParam && isTemplateIdValid(documentTemplates as any[], templateParam)) {
+      const t = getTemplateSafe(documentTemplates as any[], templateParam);
+      if (t) {
+        const base = buildInitialValues(t);
+        const withPrefill = applyPrefillIfEmpty(t, base, prefillParam);
+
+        setForm({ templateId: t.id, values: withPrefill });
+        setPreviewMode("layout");
+        setLastSavedAt(undefined);
+
+        const lbl = (t as any)?.label || t.id;
+        setMessage(
+          Object.keys(prefillParam).length
+            ? `Modèle + pré-remplissage : ${lbl}`
+            : `Modèle : ${lbl}`
+        );
+      }
+      return;
+    }
+
+    // Sinon : comportement normal (brouillon local)
+    const d = loadDraft();
+    if (d) {
+      const raw = (d.form || {}) as any;
+      const templateId =
+        typeof raw.templateId === "string" ? raw.templateId : defaultTemplateId;
+      const t = getTemplateSafe(documentTemplates as any[], templateId);
+
+      if (t) {
+        const initial = buildInitialValues(t);
+        for (const f of getFieldsSafe(t)) {
+          const v = raw[f.id];
+          if (typeof v === "string") initial[f.id] = v;
+        }
+        setForm({ templateId: t.id, values: initial });
+      }
+
+      setPreviewMode(d.previewMode);
+      setLastSavedAt(d.savedAt);
+    }
+  }, [templateParam, prefillParam]);
+
+  // auto-save draft
+  useEffect(() => {
+    const now = Date.now();
+    const payload = {
+      form: { templateId: form.templateId, ...cleanValues },
+      previewMode,
+      savedAt: now,
+    };
+    saveDraft(payload);
+    setLastSavedAt(now);
+  }, [form.templateId, cleanValues, previewMode]);
+
   return (
     <Container>
       <Section>
-        <div className="mx-auto w-full max-w-5xl py-10">
+        <div className="mx-auto w-full max-w-6xl py-10">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h1 className="text-2xl font-semibold tracking-tight">Documents</h1>
               <p className="mt-1 text-sm text-zinc-600">
-                Sélectionnez un modèle, remplissez les champs et copiez le texte, imprimez ou exportez en PDF.
+                Générateur de documents. Remplissez le formulaire, vérifiez l’aperçu,
+                puis copiez ou exportez en PDF.
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
-              <Badge variant="outline">MVP</Badge>
-              <Button type="button" variant="ghost" onClick={() => setShowHistory((v) => !v)}>
-                {showHistory ? "Masquer l'historique" : "Historique"}
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="secondary" onClick={() => setShowHistory((v) => !v)}>
+                {showHistory ? "Fermer l'historique" : `Historique (${history.length})`}
               </Button>
+
+              <Button variant="secondary" onClick={doClearDraft}>
+                Effacer le brouillon
+              </Button>
+
+              <Button variant="secondary" onClick={handleDownloadBackup}>
+                Télécharger sauvegarde
+              </Button>
+
+              <Button variant="secondary" onClick={openImportDialog}>
+                Importer sauvegarde
+              </Button>
+
+              <input
+                ref={importInputRef}
+                type="file"
+                accept="application/json"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void handleImportFile(f);
+                }}
+              />
             </div>
           </div>
 
           {message ? (
-            <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-700">{message}</div>
+            <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-700">
+              {message}
+            </div>
           ) : null}
 
-          {/* Historique */}
-          {showHistory ? (
-            <Card className="mt-6">
-              <CardContent className="p-5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <h2 className="text-sm font-semibold text-zinc-900">Historique (local)</h2>
-                    <p className="text-xs text-zinc-500">
-                      Jusqu'à {HISTORY_MAX_ITEMS} documents. Sauvegardé sur cet appareil.
-                    </p>
+          <div className="mt-6 grid gap-5 lg:grid-cols-12">
+            {/* Form */}
+            <div className="lg:col-span-5">
+              <Card>
+                <CardContent className="p-5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-semibold text-zinc-900">Formulaire</div>
+                    <Badge variant="outline">
+                      {lastSavedAt ? `Brouillon enregistré • ${formatFR(lastSavedAt)}` : "—"}
+                    </Badge>
                   </div>
 
-                  <div className="flex flex-wrap gap-2">
-                    <Button type="button" variant="secondary" onClick={() => downloadBackupFile()}>
-                      Télécharger une sauvegarde
-                    </Button>
+                  <div className="mt-4">
+                    <FieldLabel htmlFor={`${uid}-template`}>Modèle</FieldLabel>
+                    <Select
+                      id={`${uid}-template`}
+                      value={form.templateId}
+                      onChange={(e) => {
+                        const nextId = e.target.value;
+                        const t = getTemplateSafe(documentTemplates as any[], nextId);
+                        if (!t) return;
 
-                    <Button type="button" variant="ghost" onClick={openImportDialog}>
-                      Importer une sauvegarde
-                    </Button>
-
-                    <Button type="button" variant="ghost" onClick={handleClearHistory} disabled={history.length === 0}>
-                      Supprimer l'historique
-                    </Button>
+                        setForm({
+                          templateId: t.id,
+                          values: buildInitialValues(t),
+                        });
+                      }}
+                    >
+                      {(documentTemplates as any[]).map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </Select>
                   </div>
-                </div>
 
-                <input
-                  ref={importInputRef}
-                  type="file"
-                  accept="application/json"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    handleImportFile(file);
-                  }}
-                />
+                  <div className="mt-5 grid gap-4">
+                    {fields.map((field) => {
+                      const id = `${uid}-${field.id}`;
+                      const err = errors[field.id];
 
-                <div className="mt-4 grid gap-3">
-                  {history.length === 0 ? (
-                    <div className="text-sm text-zinc-500">Aucun document enregistré pour le moment.</div>
-                  ) : (
-                    history.map((h) => (
-                      <button
-                        key={h.id}
-                        type="button"
-                        onClick={() => handleLoadHistoryItem(h)}
-                        className="w-full rounded-xl border border-zinc-200 bg-white p-4 text-left transition hover:bg-zinc-50"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="text-sm font-semibold text-zinc-900">
-                            {h.templateLabel}
-                            {h.objet ? ` — ${h.objet}` : ""}
-                          </div>
-                          <div className="text-xs text-zinc-500">{new Date(h.createdAt).toLocaleString("fr-FR")}</div>
+                      const commonProps = {
+                        id,
+                        value: form.values[field.id] ?? "",
+                        onChange: (e: any) => {
+                          const v = e.target.value as string;
+                          setForm((prev) => ({
+                            ...prev,
+                            values: { ...prev.values, [field.id]: v },
+                          }));
+                        },
+                        "aria-invalid": !!err,
+                      } as any;
+
+                      return (
+                        <div key={field.id} className="grid gap-1">
+                          <FieldLabel htmlFor={id}>
+                            {field.label}{" "}
+                            {field.required ? <span className="text-red-600">*</span> : null}
+                          </FieldLabel>
+
+                          {field.type === "textarea" ? (
+                            <Textarea {...commonProps} placeholder={field.placeholder} />
+                          ) : (
+                            <Input {...commonProps} placeholder={field.placeholder} />
+                          )}
+
+                          {field.hint ? <FieldHint id={`${id}-hint`}>{field.hint}</FieldHint> : null}
+                          {err ? <FieldError id={`${id}-err`}>{err}</FieldError> : null}
                         </div>
+                      );
+                    })}
+                  </div>
 
-                        <div className="mt-1 text-xs text-zinc-600">
-                          {h.destinataire
-                            ? `Destinataire : ${h.destinataire}`
-                            : "Destinataire : (non renseigné)"}
-                        </div>
-                        <div className="mt-2 text-xs text-zinc-500">{h.snippet}</div>
-                      </button>
-                    ))
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ) : null}
+                  <div className="mt-6 flex flex-wrap items-center gap-2">
+                    <Button onClick={handleCopy} disabled={isCopying || hasBlockingError}>
+                      {isCopying ? "Copie…" : "Copier"}
+                    </Button>
 
-          {/* Formulaire */}
-          <Card className="mt-6">
-            <CardContent className="p-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-zinc-900">Générateur</h2>
-                  <p className="text-xs text-zinc-500">
-                    Brouillon auto enregistré sur cet appareil
-                    {lastSavedAt ? ` — Dernière sauvegarde : ${formatFR(lastSavedAt)}` : ""}
-                  </p>
-                </div>
+                    <Button
+                      variant="secondary"
+                      onClick={handleDownloadPdf}
+                      disabled={isPdfLoading || hasBlockingError}
+                    >
+                      {isPdfLoading ? "PDF…" : "Télécharger PDF"}
+                    </Button>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  {copied === "ok" ? (
-                    <Badge>Copié</Badge>
-                  ) : copied === "err" ? (
-                    <Badge className="bg-red-600 text-white hover:bg-red-600">Copie impossible</Badge>
-                  ) : null}
-                </div>
-              </div>
+                    <Button
+                      variant="secondary"
+                      onClick={() =>
+                        setPreviewMode((m) => (m === "layout" ? "text" : "layout"))
+                      }
+                    >
+                      {previewMode === "layout" ? "Aperçu texte" : "Aperçu mise en page"}
+                    </Button>
 
-              <div className="mt-4 grid gap-5">
-                <div className="grid gap-1">
-                  <FieldLabel>Modèle</FieldLabel>
-                  <Select value={form.templateId} onChange={(e) => setForm((s) => ({ ...s, templateId: e.target.value }))}>
-                    {documentTemplates.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.label}
-                      </option>
-                    ))}
-                  </Select>
-                  <FieldHint>{currentTemplate.description}</FieldHint>
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <TextField
-                    label="Votre nom / Société"
-                    value={form.nom}
-                    placeholder="Ex : Jean Dupont"
-                    onChange={(v) => setForm((s) => ({ ...s, nom: v }))}
-                  />
-                  <TextField
-                    label="Ville"
-                    value={form.ville}
-                    placeholder="Ex : Toulouse"
-                    onChange={(v) => setForm((s) => ({ ...s, ville: v }))}
-                  />
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <TextField
-                    label="Adresse"
-                    value={form.adresse}
-                    placeholder="Ex : 12 rue …"
-                    onChange={(v) => setForm((s) => ({ ...s, adresse: v }))}
-                  />
-                  <TextField
-                    label="Date (jj/mm/aaaa)"
-                    value={form.date}
-                    placeholder="Ex : 12/02/2026"
-                    hint="Laissez vide si vous ne souhaitez pas l'afficher"
-                    error={dateError}
-                    onChange={(v) => setForm((s) => ({ ...s, date: v }))}
-                  />
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <TextField
-                    label="Destinataire"
-                    value={form.destinataire}
-                    placeholder="Ex : Société X"
-                    onChange={(v) => setForm((s) => ({ ...s, destinataire: v }))}
-                  />
-                  <TextField
-                    label="Adresse du destinataire"
-                    value={form.adresseDestinataire}
-                    placeholder="Ex : 8 avenue …"
-                    onChange={(v) => setForm((s) => ({ ...s, adresseDestinataire: v }))}
-                  />
-                </div>
-
-                <TextField
-                  label="Objet"
-                  value={form.objet}
-                  placeholder="Ex : Mise en demeure de …"
-                  onChange={(v) => setForm((s) => ({ ...s, objet: v }))}
-                />
-
-                <TextAreaField
-                  label="Les faits"
-                  value={form.faits}
-                  placeholder="Décrivez la situation (chronologie, contexte)…"
-                  onChange={(v) => setForm((s) => ({ ...s, faits: v }))}
-                />
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <TextAreaField
-                    label="Ce que vous demandez"
-                    value={form.demande}
-                    placeholder="Indiquez votre demande précise…"
-                    onChange={(v) => setForm((s) => ({ ...s, demande: v }))}
-                  />
-
-                  <TextField
-                    label="Délai (en jours)"
-                    value={form.delai}
-                    placeholder="Ex : 8"
-                    hint="Optionnel. Utilisé si le modèle l'affiche."
-                    error={delaiError}
-                    onChange={(v) => setForm((s) => ({ ...s, delai: v }))}
-                  />
-                </div>
-
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                  <Button type="button" onClick={handleCopy} disabled={disableActions}>
-                    {isCopying ? "Copie…" : "Copier le texte"}
-                  </Button>
-
-                  <Button type="button" variant="secondary" onClick={handleDownloadPdf} disabled={disableActions}>
-                    {isPdfLoading ? "Génération…" : "Télécharger en PDF"}
-                  </Button>
-
-                  <Button type="button" variant="ghost" onClick={handlePrint} disabled={disableActions}>
-                    Imprimer
-                  </Button>
-
-                  <Button type="button" variant="ghost" onClick={handleDownloadTxt} disabled={disableActions}>
-                    Télécharger en .txt
-                  </Button>
-
-                  <Button type="button" variant="ghost" onClick={doClearDraft} disabled={isCopying || isPdfLoading}>
-                    Effacer le brouillon
-                  </Button>
-
-                  <Button type="button" variant="outline" asChild>
-                    <Link href="/compte">Gérer mes données</Link>
-                  </Button>
-
-                  <div className="flex-1" />
+                    {copied === "ok" ? (
+                      <span className="text-xs text-green-700">Copié ✓</span>
+                    ) : null}
+                    {copied === "err" ? (
+                      <span className="text-xs text-red-600">Copie impossible</span>
+                    ) : null}
+                  </div>
 
                   {hasBlockingError ? (
-                    <span className="self-center text-xs text-red-600">Corrigez la date et/ou le délai.</span>
+                    <div className="mt-3 text-xs text-red-600">
+                      Corrigez les erreurs du formulaire avant de copier ou exporter.
+                    </div>
                   ) : null}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* APERÇU */}
-          <Card className="mt-6">
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-zinc-900">Aperçu du document</h2>
-                  <p className="text-xs text-zinc-500">Mise à jour en temps réel</p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <div className="inline-flex rounded-md border border-zinc-200 bg-white p-1 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => setPreviewMode("layout")}
-                      className={
-                        "rounded px-2 py-1 transition " +
-                        (previewMode === "layout"
-                          ? "bg-zinc-900 text-white"
-                          : "text-zinc-700 hover:bg-zinc-50")
-                      }
-                    >
-                      Mise en page
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPreviewMode("text")}
-                      className={
-                        "rounded px-2 py-1 transition " +
-                        (previewMode === "text"
-                          ? "bg-zinc-900 text-white"
-                          : "text-zinc-700 hover:bg-zinc-50")
-                      }
-                    >
-                      Texte
-                    </button>
-                  </div>
-                </div>
-              </div>
+                </CardContent>
+              </Card>
 
               <div className="mt-4">
-                {previewMode === "text" ? (
-                  <pre className="whitespace-pre-wrap rounded-xl border border-zinc-200 bg-white p-4 text-sm text-zinc-900">
-                    {previewText}
-                  </pre>
-                ) : (
-                  <div className="rounded-xl border border-zinc-200 bg-white p-6">
-                    <div className="mx-auto max-w-2xl text-sm leading-relaxed text-zinc-900">
-                      <pre className="whitespace-pre-wrap">{previewText}</pre>
+                <LegalDisclaimer />
+              </div>
+            </div>
+
+            {/* Preview */}
+            <div className="lg:col-span-7">
+              <Card>
+                <CardContent className="p-5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-semibold text-zinc-900">Aperçu</div>
+
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline">
+                        {previewMode === "layout" ? "Mise en page" : "Texte"}
+                      </Badge>
+
+                      {/* ✅ Impression PRO (ouvre /print avec le texte) */}
+                      <button
+                        type="button"
+                        className="text-xs text-zinc-600 underline"
+                        onClick={handleOpenPrintPro}
+                      >
+                        Imprimer (pro)
+                      </button>
                     </div>
                   </div>
-                )}
-              </div>
 
-              <p className="mt-4 text-xs text-zinc-500">
-                ⚠️ LEXOUTIL propose des modèles et une assistance générale. Aucun conseil juridique personnalisé.
-              </p>
-            </CardContent>
-          </Card>
+                  <div className="mt-4 rounded-lg border bg-white p-6">
+                    <pre
+                      className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-900"
+                      onClick={(e) => {
+                        const el = e.currentTarget;
+                        const range = document.createRange();
+                        range.selectNodeContents(el);
+                        const sel = window.getSelection();
+                        sel?.removeAllRanges();
+                        sel?.addRange(range);
+                      }}
+                      title="Cliquez pour sélectionner tout le texte"
+                    >
+                      {previewText}
+                    </pre>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {showHistory ? (
+                <Card className="mt-5">
+                  <CardContent className="p-5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-sm font-semibold text-zinc-900">Historique</div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button variant="secondary" onClick={() => setHistory(loadHistory())}>
+                          Actualiser
+                        </Button>
+
+                        <Button variant="destructive" onClick={handleClearHistory}>
+                          Supprimer l'historique
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-3">
+                      {history.length === 0 ? (
+                        <div className="text-sm text-zinc-600">Aucun document dans l’historique.</div>
+                      ) : (
+                        history.map((item) => (
+                          <Card key={item.id}>
+                            <CardContent className="p-4">
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div className="min-w-60 flex-1">
+                                  <div className="text-sm font-semibold text-zinc-900">
+                                    {item.objet || item.templateLabel}
+                                  </div>
+                                  <div className="mt-1 text-xs text-zinc-600">
+                                    {formatFR(item.createdAt)} • {item.templateLabel}
+                                    {item.destinataire ? ` • ${item.destinataire}` : ""}
+                                  </div>
+
+                                  {item.snippet ? (
+                                    <div className="mt-2 text-sm text-zinc-700 line-clamp-3">
+                                      {item.snippet}
+                                    </div>
+                                  ) : null}
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Button
+                                    variant="secondary"
+                                    onClick={() => handleLoadHistoryItem(item)}
+                                  >
+                                    Charger
+                                  </Button>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : null}
+            </div>
+          </div>
         </div>
       </Section>
     </Container>
