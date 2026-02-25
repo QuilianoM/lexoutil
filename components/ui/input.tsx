@@ -1,27 +1,33 @@
 import * as React from "react";
-import { cn } from "@/lib/cn";
 
-export type InputProps = React.InputHTMLAttributes<HTMLInputElement>;
+/**
+ * Input — Design system Lexoutil
+ * - Supporte le ref (forwardRef)
+ * - Props standards <input>
+ */
+export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {}
 
-export function Input({ className, type = "text", ...props }: InputProps) {
-  const invalid =
-    props["aria-invalid"] === true || props["aria-invalid"] === "true";
-
+const Input = React.forwardRef<HTMLInputElement, InputProps>(function Input(
+  { className = "", type = "text", ...props },
+  ref
+) {
   return (
     <input
+      ref={ref}
       type={type}
-      className={cn(
-        "w-full rounded-md border bg-white px-3 py-2 text-sm text-zinc-900 " +
-          "placeholder:text-zinc-400 " +
-          "transition-colors duration-150 ease-out " +
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900/25 " +
-          "disabled:cursor-not-allowed disabled:opacity-50",
-        invalid
-          ? "border-red-300 focus-visible:ring-red-500/30"
-          : "border-zinc-200 focus-visible:border-zinc-300",
-        className
-      )}
+      className={[
+        "w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900",
+        "placeholder:text-zinc-400",
+        "outline-none",
+        "focus:ring-2 focus:ring-zinc-900/15 focus:border-zinc-300",
+        "disabled:cursor-not-allowed disabled:opacity-60",
+        className,
+      ].join(" ")}
       {...props}
     />
   );
-}
+});
+
+Input.displayName = "Input";
+
+export { Input };

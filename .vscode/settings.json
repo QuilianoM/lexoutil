@@ -1,0 +1,14 @@
+{
+  "files.watcherExclude": {
+    "**/.next/**": true,
+    "**/.turbo/**": true
+  },
+  "search.exclude": {
+    "**/.next/**": true,
+    "**/.turbo/**": true
+  },
+  "typescript.tsserver.exclude": [
+    "**/.next/**",
+    "**/.turbo/**"
+  ]
+}

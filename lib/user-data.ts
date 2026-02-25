@@ -1,16 +1,18 @@
-// Données utilisateur locales (Étape 7)
-// Source unique : brouillon + historique + export/import + suppression.
+// lib/user-data.ts
+// Données utilisateur locales
+// Source unique : brouillon + historique + export/import + suppression + limite Free/Pro.
+
+import { isPro, USER_ID_KEY, SUB_STATUS_KEY } from "@/lib/subscription";
 
 export const DRAFT_STORAGE_KEY = "lexoutil_documents_draft_v1";
 export const HISTORY_STORAGE_KEY = "lexoutil_documents_history_v1";
 
-// Ces 2 clés existent déjà dans lib/subscription.ts.
-// On les répète ici pour pouvoir tout effacer depuis /compte sans dépendance.
-export const USER_ID_KEY = "lexoutil_user_id_v1";
-export const SUB_STATUS_KEY = "lexoutil_sub_status_v1";
-
 export const BACKUP_VERSION = 1;
-export const HISTORY_MAX_ITEMS_DEFAULT = 30;
+
+// ✅ Limite produit
+export const FREE_HISTORY_LIMIT = 5;
+// Pro = “quasi illimité”, mais on met un plafond technique raisonnable
+export const PRO_HISTORY_LIMIT = 200;
 
 export type DraftPayload = {
   form: Record<string, unknown>;
@@ -75,15 +77,28 @@ function isHistoryItem(x: any): x is HistoryItem {
 }
 
 /* -----------------------------
+   Limites Free / Pro
+------------------------------ */
+export function getHistoryLimit(): number {
+  if (typeof window === "undefined") return FREE_HISTORY_LIMIT;
+  return isPro() ? PRO_HISTORY_LIMIT : FREE_HISTORY_LIMIT;
+}
+
+export function getHistoryLimitLabel(): string {
+  return isPro() ? `Pro (${PRO_HISTORY_LIMIT})` : `Gratuit (${FREE_HISTORY_LIMIT})`;
+}
+
+/* -----------------------------
    Stats
 ------------------------------ */
 export function getLocalDocumentsStats(): {
   hasDraft: boolean;
   draftSavedAt?: number;
   historyCount: number;
+  historyLimit: number;
 } {
   if (typeof window === "undefined") {
-    return { hasDraft: false, historyCount: 0 };
+    return { hasDraft: false, historyCount: 0, historyLimit: FREE_HISTORY_LIMIT };
   }
 
   const draftRaw = localStorage.getItem(DRAFT_STORAGE_KEY);
@@ -99,7 +114,7 @@ export function getLocalDocumentsStats(): {
     ? parsedHistory.filter(isHistoryItem).length
     : 0;
 
-  return { hasDraft, draftSavedAt, historyCount };
+  return { hasDraft, draftSavedAt, historyCount, historyLimit: getHistoryLimit() };
 }
 
 /* -----------------------------
@@ -144,9 +159,31 @@ export function saveHistory(items: HistoryItem[]) {
   } catch {}
 }
 
-export function addToHistory(item: HistoryItem, maxItems = HISTORY_MAX_ITEMS_DEFAULT) {
+/**
+ * ✅ Ajout à l'historique avec limite Free/Pro.
+ * - Gratuit : max 5 entrées, si déjà à 5 => on REFUSE d'ajouter (incitation Pro).
+ * - Pro : on ajoute et on garde les plus récentes (plafond technique PRO_HISTORY_LIMIT).
+ *
+ * @returns true si ajouté, false si refusé (limite gratuite atteinte)
+ */
+export function addToHistory(item: HistoryItem, maxItems?: number): boolean {
   const current = loadHistory();
-  const next = [item, ...current].slice(0, maxItems);
+  const limit = getHistoryLimit();
+
+  const effectiveMax = Math.min(typeof maxItems === "number" ? maxItems : limit, limit);
+
+  if (!isPro() && current.length >= FREE_HISTORY_LIMIT) {
+    return false;
+  }
+
+  const next = [item, ...current].slice(0, effectiveMax);
+  saveHistory(next);
+  return true;
+}
+
+export function removeHistoryItemById(id: string) {
+  const current = loadHistory();
+  const next = current.filter((x) => x.id !== id);
   saveHistory(next);
 }
 
@@ -211,11 +248,9 @@ export function importUserBackupFromText(
 
   const merge = options?.mergeHistory !== false;
 
-  // Historique
   if (merge) {
     const currentItems = loadHistory();
 
-    // Déduplication par id, garde le plus récent
     const map = new Map<string, HistoryItem>();
     for (const it of [...currentItems, ...incomingHistory]) {
       const existing = map.get(it.id);
@@ -223,12 +258,14 @@ export function importUserBackupFromText(
     }
 
     const merged = Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
-    saveHistory(merged);
+
+    const limit = getHistoryLimit();
+    saveHistory(merged.slice(0, limit));
   } else {
-    saveHistory(incomingHistory);
+    const limit = getHistoryLimit();
+    saveHistory(incomingHistory.slice(0, limit));
   }
 
-  // Brouillon
   if (incomingDraft) {
     saveDraft(incomingDraft);
   }
@@ -250,4 +287,12 @@ export function clearAllLocalUserData() {
       localStorage.removeItem(k);
     } catch {}
   }
+}
+
+// ✅ Vide uniquement l'historique local (après synchronisation vers Supabase)
+export function clearLocalHistory() {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(HISTORY_STORAGE_KEY);
+  } catch {}
 }

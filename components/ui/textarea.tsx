@@ -1,26 +1,33 @@
 import * as React from "react";
-import { cn } from "@/lib/cn";
 
-export type TextareaProps = React.TextareaHTMLAttributes<HTMLTextAreaElement>;
+/**
+ * Textarea — Design system Lexoutil
+ * - Supporte le ref (forwardRef)
+ * - Props standards <textarea>
+ */
+export interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {}
 
-export function Textarea({ className, ...props }: TextareaProps) {
-  const invalid =
-    props["aria-invalid"] === true || props["aria-invalid"] === "true";
-
+const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(function Textarea(
+  { className = "", ...props },
+  ref
+) {
   return (
     <textarea
-      className={cn(
-        "w-full rounded-md border bg-white px-3 py-2 text-sm text-zinc-900 " +
-          "placeholder:text-zinc-400 " +
-          "transition-colors duration-150 ease-out " +
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900/25 " +
-          "disabled:cursor-not-allowed disabled:opacity-50",
-        invalid
-          ? "border-red-300 focus-visible:ring-red-500/30"
-          : "border-zinc-200 focus-visible:border-zinc-300",
-        className
-      )}
+      ref={ref}
+      className={[
+        "w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900",
+        "placeholder:text-zinc-400",
+        "outline-none",
+        "focus:ring-2 focus:ring-zinc-900/15 focus:border-zinc-300",
+        "disabled:cursor-not-allowed disabled:opacity-60",
+        "min-h-24 resize-vertical",
+        className,
+      ].join(" ")}
       {...props}
     />
   );
-}
+});
+
+Textarea.displayName = "Textarea";
+
+export { Textarea };

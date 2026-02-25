@@ -6,6 +6,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
+import LegalDisclaimer from "@/components/legal-disclaimer";
+
 export default function MiseEnRelationPage() {
   return (
     <Container size="md" className="py-10">
@@ -13,11 +15,12 @@ export default function MiseEnRelationPage() {
 
       <p className="mt-1 text-sm text-zinc-600">
         Si votre situation nécessite un accompagnement personnalisé, Lexoutil peut vous orienter vers un
-        professionnel du droit (avocat / juriste / organisme adapté).{" "}
-        <span className="text-zinc-500">
-          Lexoutil fournit une aide générale et des modèles — pas de conseil juridique personnalisé.
-        </span>
+        professionnel du droit (avocat / juriste / organisme adapté).
       </p>
+
+      <div className="mt-6">
+        <LegalDisclaimer variant="sensible" />
+      </div>
 
       <Section className="pt-6">
         <Card>
@@ -71,11 +74,7 @@ export default function MiseEnRelationPage() {
             <h2 className="text-sm font-semibold text-zinc-900">Comment ça fonctionne</h2>
 
             <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-              <Step
-                number="1"
-                title="Vous expliquez les faits"
-                text="Vous décrivez la situation (dates, preuves, échanges)."
-              />
+              <Step number="1" title="Vous expliquez les faits" text="Vous décrivez la situation (dates, preuves, échanges)." />
               <Step
                 number="2"
                 title="Orientation"
@@ -164,15 +163,7 @@ export default function MiseEnRelationPage() {
   );
 }
 
-function Step({
-  number,
-  title,
-  text,
-}: {
-  number: string;
-  title: string;
-  text: string;
-}) {
+function Step({ number, title, text }: { number: string; title: string; text: string }) {
   return (
     <div className="rounded-lg border border-zinc-200 p-4">
       <div className="flex items-center gap-2">
